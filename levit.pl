@@ -90,15 +90,8 @@ $domain = "git.$domain";
 
 my $c_rev = 0;
 my $max_id = 0;
-my $gfi;
+open(my $gfi, '|-:utf8', $GFI_CMD) or croak "error opening pipe to 'git fast-import': $!";
 while (defined(my $page = $queue->dequeue()) ) {
-    my $max_gfi_reached = $c_rev % $MAX_GFI == 0;
-    if (!defined $gfi || $max_gfi_reached) {
-        if (defined $gfi) {
-            close($gfi) or croak "error closing pipe to 'git fast-import': $!";
-        }
-        open($gfi, '|-:utf8', $GFI_CMD) or croak "error opening pipe to 'git fast-import': $!";
-    }
     # record current revision and page ids to be able to provide meaningful progress messages
     if ($page->{new}) {
         printf {$gfi} "progress processing page '%s:%s'  $c_rev / < $max_id\n", $page->{namespace}, $page->{title};
@@ -143,17 +136,6 @@ say {$gfi} "progress processing $c_rev revisions";
 
 my $commit_id = 1;
 while (my ($revid, $fr) = each %$CACHE){
-    my $max_gfi_reached = $commit_id % $MAX_GFI == 0;
-    my $from = '';
-    if (!defined $gfi || $max_gfi_reached) {
-        if (defined $gfi) {
-            # TODO: needs work when working on other branches
-            # TODO^2: needs work when importing incrementally
-            $from = "from refs/heads/master^0\n";
-            close($gfi) or croak "error closing pipe to 'git fast-import': $!";
-        }
-        open($gfi, '|-:utf8', $GFI_CMD) or croak "error opening pipe to 'git fast-import': $!";
-    }
     if ($commit_id % 100000 == 0) {
         say {$gfi} "progress revision $commit_id / $c_rev";
     }
@@ -162,14 +144,12 @@ while (my ($revid, $fr) = each %$CACHE){
     my $msg = "$rev->{comment}\n\nLevit.pl of page $rev->{pid} rev $revid\n";
 
     my @parts = ($rev->{ns});
-    # we want sane subdirectories
-    for my $i (0 .. min( length($rev->{title}), $DEPTH) -1  ) {
-        my $c = substr($rev->{title}, $i, 1);
-        $c =~ s{([^0-9A-Za-z_])}{sprintf(".%x", ord($1))}eg;
-        push @parts, $c;
-    }
 
+    # we want sane subdirectories
     $rev->{title} =~ s{/}{\x1c}g;
+    my $sub = substr $rev->{title}, 0, $DEPTH;
+    push @parts, $sub;
+
     push @parts, $rev->{title};
     my $wtime = Time::Piece->strptime($rev->{timestamp}, '%Y-%m-%dT%H:%M:%SZ')->strftime('%s');
     my $ctime = $CURRENT ? time() : $wtime;
@@ -180,9 +160,9 @@ author %s %s +0000
 committer %s %s %s
 data %d
 %s
-%sM 100644 %s %s
+M 100644 %s %s
 },
-    $rev->{user}, $wtime, $COMMITTER, $ctime, $TZ, bytes::length($msg), $msg, $from, unpack('H*', $rev->{sha1}), join('/', @parts));
+    $rev->{user}, $wtime, $COMMITTER, $ctime, $TZ, bytes::length($msg), $msg, unpack('H*', $rev->{sha1}), join('/', @parts));
 
     $commit_id++;
 }

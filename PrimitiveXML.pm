@@ -14,7 +14,7 @@ sub new {
     if ($method eq 'location') {
         open $in, '<', $input or die "cannot open input for method '$method'";
     }
-    if ($method eq 'handle') {
+    elsif ($method eq 'handle') {
         $in = openhandle($input) or die "cannot open input for method '$method'";
 
     }
