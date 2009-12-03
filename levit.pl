@@ -44,6 +44,7 @@ my $HELP;
 my $MAX_GFI     = 1000000;
 my $GFI_CMD     = 'git fast-import --quiet';
 my @NS;
+my $ONE;
 
 my $result = GetOptions(
     'max|m=i'       => \$PAGES,
@@ -53,6 +54,7 @@ my $result = GetOptions(
     'ns|n=s'        => \@NS,
     'current|c'     => \$CURRENT,
     'help|?'        => \$HELP,
+    'one|o'         => \$ONE,
 );
 usage() if !$result || $HELP;
 
@@ -82,8 +84,8 @@ my $stream = \*STDIN;
 # put the parsing in a thread and provide a queue to give parses back through
 my $queue = Thread::Queue->new();
 my $thr = threads->create(\&thr_parse, $stream, $queue, $PAGES, \@NS);
-
-my $CACHE = get_db($filename, 'new', $DB);
+my $pqueue = Thread::Queue->new();
+my $persister = threads->create(\&persist, $pqueue, $filename, 'new', $DB);
 
 my $domain = $queue->dequeue();
 $domain = "git.$domain";
@@ -119,17 +121,19 @@ while (defined(my $page = $queue->dequeue()) ) {
     );
 
     # persist the serialized data with rev id as reference
-    $CACHE->{"$revid"}= nfreeze(\%rev);
+    $pqueue->enqueue([$revid, \%rev]);
 
     $c_rev++;
 }
+$pqueue->enqueue(undef);
 # we don't need the worker thread anymore. The input can go, too.
 $thr->join();
+$persister->join();
 close($stream);
 
-untie %$CACHE;
-undef %$CACHE;
-$CACHE = get_db($filename, 'read', $DB);
+exit(0) if $ONE;
+
+my $CACHE = get_db($filename, 'read', $DB);
 
 # go over the persisted metadata with a cursor
 say {$gfi} "progress processing $c_rev revisions";
@@ -146,9 +150,13 @@ while (my ($revid, $fr) = each %$CACHE){
     my @parts = ($rev->{ns});
 
     # we want sane subdirectories
+    for my $i (0 .. min( length($rev->{title}), $DEPTH) -1  ) {
+        my $c = substr($rev->{title}, $i, 1);
+        $c =~ s{([^0-9A-Za-z_])}{sprintf(".%x", ord($1))}eg;
+        push @parts, $c;
+    }
+
     $rev->{title} =~ s{/}{\x1c}g;
-    my $sub = substr $rev->{title}, 0, $DEPTH;
-    push @parts, $sub;
 
     push @parts, $rev->{title};
     my $wtime = Time::Piece->strptime($rev->{timestamp}, '%Y-%m-%dT%H:%M:%SZ')->strftime('%s');
@@ -271,13 +279,11 @@ sub thr_parse {
             last if $MPAGES > 0 && $c_page > $MPAGES;
         }
         # make threads::shared happy (initializes shared hashrefs);
-        my $h = &share({});
-        %$h = %$rev;
-        while ($queue->pending() > 10000) {
+        while ($queue->pending() > 1000) {
             threads->yield();
         }
 
-        $queue->enqueue($h);
+        $queue->enqueue($rev);
     }
 
     # give an undef to boss thread, to signal "we are done"
@@ -285,7 +291,16 @@ sub thr_parse {
     return;
 }
 
-
+sub persist {
+    my ($queue, $file, $method, $config) = @_;
+    my $CACHE = get_db($file, $method, $config);
+    while (defined( my $elt = $queue->dequeue() )) {
+        $CACHE->{"$elt->[0]"} = nfreeze($elt->[1]);
+    }
+    untie %$CACHE;
+    undef %$CACHE;
+    return 1;
+}
 
 
 sub usage {
