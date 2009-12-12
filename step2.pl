@@ -144,13 +144,11 @@ sub path {
     state $DEPTH = opt('depth');
 
     my @parts = ($rev->{namespace});
-    # we want sane subdirectories
-    push @parts, map { 
-        $_ =~ s{([^0-9A-Za-z_])}{sprintf(".%x", ord($1))}e;
-        $_;
-    } split(//, substr($rev->{title}, 0, $DEPTH));
 
+    # we want sane subdirectories
     $rev->{title} =~ s{/}{\x1c}g;
+    push @parts, substr($rev->{title}, 0, $DEPTH);
+
     push @parts, $rev->{title};
 
     $rev->{path} = join('/', @parts);
