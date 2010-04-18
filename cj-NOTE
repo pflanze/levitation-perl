@@ -1,0 +1,25 @@
+This file is just containing notes from Christian Jaeger, it is not
+meant to be merged upstream.
+
+What I've observed:
+
+I've imported the full history export for
+http://en.wikipedia.org/wiki/Graham_Chapman (the export file was named
+Wikipedia-20100418160552.xml).
+
+Running step1.pl was very fast, but step2.pl was very slow (several
+minutes just for one file??, there must be something broken?).
+
+Also, it seems the resulting history has a different order of commits
+in Git than in the xml file, why would that make sense? Whereas in the
+xml file the entries are ordered by the timestamp, in Git they are not
+anymore in parts of the history.
+
+Also, I wonder why step1.pl created 90 *.db files?
+
+$ ls *db|wc -l
+90
+$ grep timestamp Wikipedia-20100418160552.xml |wc -l
+979
+
+So I guess something is broken.
